@@ -1,1 +1,206 @@
-https://replit.com/@ubscoinx/Python?mobileBridge=1&hideBottomBar=1&forceTheme=replitDark&errorTrace=a17cfaf1-f3aa-412a-b27c-a46008834966&mobileWebview=1&supportsUpsellBridge=1&permissionRequest=1#main.py
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, CallbackContext, JobQueue
+from datetime import datetime, timedelta
+import random
+
+# Токен бота, отриманий від BotFather
+TOKEN = "7683609223:AAH4j1YqsSS4VSrNKHclqxJOrktEWkHKT_c"
+
+# Словник для збереження даних користувачів
+users_data = {}
+
+# Основні функції гри
+
+# Стартова команда
+def start(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    users_data[user_id] = {
+        "khinkal_count": 0,
+        "ybs_balance": 0,
+        "restaurant_level": 1,
+        "last_cooked": datetime.now(),
+        "cooking_time_left": 0,
+        "referrals": 0
+    }
+    update.message.reply_text("Привіт! Це твій ресторан UKS. Використовуй /cook для приготування Khinkal’!")
+
+# Команда для початку приготування Khinkal’
+def cook(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    user_data = users_data.get(user_id)
+
+    if user_data:
+        # Перевірка, чи можна почати приготування
+        if user_data["cooking_time_left"] > 0:
+            remaining_time = user_data["cooking_time_left"]
+            update.message.reply_text(f"Залишилось {remaining_time} до приготування нових Khinkal’.")
+        else:
+            # Початок приготування
+            user_data["last_cooked"] = datetime.now()
+            user_data["cooking_time_left"] = timedelta(hours=3)  # Час приготування 3 години
+            update.message.reply_text("Приготування Khinkal’ розпочалось! Залишилось 3 години.")
+            context.job_queue.run_once(finish_cooking, 3 * 60 * 60, context=user_id)
+    else:
+        update.message.reply_text("Схоже, у тебе ще немає ресторану. Використовуй /start для початку.")
+
+# Завершення приготування Khinkal’
+def finish_cooking(context: CallbackContext):
+    user_id = context.job.context
+    user_data = users_data.get(user_id)
+
+    if user_data:
+        user_data["khinkal_count"] += 1
+        user_data["ybs_balance"] += 10  # 10 YBS за 1 Khinkal’
+        user_data["cooking_time_left"] = 0
+        context.bot.send_message(user_id, f"Приготування завершено! Ти отримав 1 Khinkal’. Тепер у тебе {user_data['ybs_balance']} YBS!")
+
+# Магазин
+def shop(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    update.message.reply_text(
+        "Вітання в магазині! Ось що можна купити:\n"
+        "1. Покращення кухні - 50 YBS\n"
+        "2. Бустери для прискорення - 100 YBS\n"
+        "3. Авто-майнінг - 200 YBS\n"
+        "Для покупки напишіть /buy [номер предмета]."
+    )
+
+# Купівля предметів
+def buy(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    user_data = users_data.get(user_id)
+
+    if len(context.args) == 1:
+        item = context.args[0]
+
+        if item == "1" and user_data["ybs_balance"] >= 50:
+            user_data["ybs_balance"] -= 50
+            user_data["restaurant_level"] += 1
+            update.message.reply_text(f"Ти купив покращення кухні! Рівень ресторану: {user_data['restaurant_level']}.")
+        elif item == "2" and user_data["ybs_balance"] >= 100:
+            user_data["ybs_balance"] -= 100
+            update.message.reply_text("Ти купив бустер для прискорення приготування!")
+        elif item == "3" and user_data["ybs_balance"] >= 200:
+            user_data["ybs_balance"] -= 200
+            update.message.reply_text("Ти купив авто-майнінг!")
+        else:
+            update.message.reply_text("Недостатньо YBS для покупки!")
+    else:
+        update.message.reply_text("Вибери, що хочеш купити. Напишіть номер предмета.")
+
+# Реферальна програма
+def referral(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    if len(context.args) == 1:
+        ref_code = context.args[0]
+        referred_by = None
+
+        # Перевіряємо, чи є цей реферальний код
+        for uid, data in users_data.items():
+            if f"referral{uid}" == ref_code:
+                referred_by = uid
+                break
+
+        if referred_by:
+            users_data[user_id]["referrals"] += 1
+            users_data[user_id]["ybs_balance"] += 10  # Нагорода за реферала
+            users_data[referred_by]["ybs_balance"] += 20  # Нагорода для того, хто запросив
+            update.message.reply_text(f"Ти успішно зареєстрував реферала! Ти отримав 20 YBS!")
+        else:
+            update.message.reply_text("Невірний реферальний код.")
+    else:
+        update.message.reply_text("Напишіть реферальний код у форматі /referral [код].")
+
+# Лідерборд
+def leaderboard(update: Update, context: CallbackContext):
+    sorted_users = sorted(users_data.items(), key=lambda x: x[1]["khinkal_count"], reverse=True)
+    leaderboard_text = "Таблиця лідерів:\n"
+    for idx, (user_id, data) in enumerate(sorted_users[:10], 1):
+        leaderboard_text += f"{idx}. {user_id} - Khinkal' приготовлено: {data['khinkal_count']}\n"
+    update.message.reply_text(leaderboard_text)
+
+# Команда для перегляду балансу та прогресу
+def status(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    user_data = users_data.get(user_id)
+
+    if user_data:
+        update.message.reply_text(
+            f"Твій статус:\n"
+            f"Khinkal’ приготовано: {user_data['khinkal_count']}\n"
+            f"YBS на рахунку: {user_data['ybs_balance']}\n"
+            f"Рівень ресторану: {user_data['restaurant_level']}\n"
+            f"Час до наступного приготування: {user_data['cooking_time_left']}\n"
+            f"Реферали: {user_data['referrals']}"
+        )
+
+def main():
+    updater = Updater(TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+    job_queue = updater.job_queue
+
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("cook", cook))
+    dispatcher.add_handler(CommandHandler("shop", shop))
+    dispatcher.add_handler(CommandHandler("buy", buy))
+    dispatcher.add_handler(CommandHandler("referral", referral))
+    dispatcher.add_handler(CommandHandler("leaderboard", leaderboard))
+    dispatcher.add_handler(CommandHandler("status", status))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
+    def start(update: Update, context: CallbackContext) -> None:
+        """Відправляє повідомлення з головним меню"""
+        keyboard = [
+            [InlineKeyboardButton("Приготувати Khinkal’", callback_data='cook')],
+            [InlineKeyboardButton("Магазин", callback_data='shop')],
+            [InlineKeyboardButton("Статус", callback_data='status')],
+            [InlineKeyboardButton("Лідерборд", callback_data='leaderboard')],
+            [InlineKeyboardButton("Реферали", callback_data='referral')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        update.message.reply_text("Вибери дію:", reply_markup=reply_markup)
+
+    def cook(update: Update, context: CallbackContext) -> None:
+        """Стартує процес приготування Khinkal’"""
+        # Логіка приготування
+        update.callback_query.answer()
+        update.callback_query.edit_message_text(text="Процес приготування почався! Залишилось 3:00.")
+
+    def shop(update: Update, context: CallbackContext) -> None:
+        """Магазин, вибір покращень"""
+        keyboard = [
+            [InlineKeyboardButton("Покращення кухні - 50 YBS", callback_data='buy_improvement')],
+            [InlineKeyboardButton("Бустери - 100 YBS", callback_data='buy_boosters')],
+            [InlineKeyboardButton("Авто-майнінг - 200 YBS", callback_data='buy_auto_mining')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        update.callback_query.answer()
+        update.callback_query.edit_message_text(text="Вибери товар для покупки:", reply_markup=reply_markup)
+
+    def status(update: Update, context: CallbackContext) -> None:
+        """Перегляд статусу: кількість YBS, приготовані Khinkal’"""
+        # Отримати дані гравця (потрібно зберігати це у вашій базі даних)
+        update.callback_query.answer()
+        update.callback_query.edit_message_text(text="Статус: 100 YBS, 10 приготованих Khinkal’.")
+
+    def leaderboard(update: Update, context: CallbackContext) -> None:
+        """Показує таблицю лідерів"""
+        # Отримати лідерів з вашої бази даних
+        update.callback_query.answer()
+        update.callback_query.edit_message_text(text="Таблиця лідерів:\n1. @player1 - 50 Khinkal’\n2. @player2 - 40 Khinkal’")
+
+    def referral(update: Update, context: CallbackContext) -> None:
+        """Реферальна програма"""
+        update.callback_query.answer()
+        update.callback_query.edit_message_text(text="Введіть реферальний код для отримання бонусу:")
+
+    def buy_item(update: Update, context: CallbackContext) -> None:
+        """Купівля товару (покращення, бустери, авто-майнінг)"""
+        item = update.callback_query.data
+        # Тут додати логіку покупки товару
+        update.callback_query.answer()
+        update.callback_query.edit_message_text(text=f"Ви успішно придбали {item}.")
